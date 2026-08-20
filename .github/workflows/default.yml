@@ -10,6 +10,7 @@ jobs:
   analyze:
     name: Analyze ${{ matrix.working-directory }}
     strategy:
+      fail-fast: false
       matrix:
         working-directory:
           - .
@@ -26,6 +27,7 @@ jobs:
   test:
     name: Test ${{ matrix.working-directory }}
     strategy:
+      fail-fast: false
       matrix:
         working-directory:
           - .
@@ -52,7 +54,7 @@ jobs:
         uses: dart-lang/setup-dart@v1
 
       - name: Get dependencies
-        run: dart pub get
+        run: dart pub get --no-example
 
       - name: Check dart format idempotency
         run: dart format --set-exit-if-changed .
@@ -71,7 +73,7 @@ jobs:
         uses: dart-lang/setup-dart@v1
 
       - name: Get dependencies
-        run: dart pub get
+        run: dart pub get --no-example
 
       - name: Dry-run publish
         run: dart pub publish --dry-run
