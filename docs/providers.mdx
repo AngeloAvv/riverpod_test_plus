@@ -1,0 +1,177 @@
+---
+title: "Providers"
+description: "Testing Provider, FutureProvider, StreamProvider, .select and .future with riverpodTest."
+---
+
+`riverpodTest` accepts anything that is a `ProviderListenable<StateT>`. That is the whole point of
+the single signature: the parameter is not "a provider", it is "something you can listen to". This
+page covers the non-notifier targets — see [Notifiers](/notifiers) for the ones that hold a state.
+
+## Provider
+
+A synchronous `Provider` emits exactly one state: the value it builds to.
+
+```dart
+final greetingProvider = Provider<String>((ref) => 'hello');
+
+riverpodTest(
+  'builds to hello',
+  provider: greetingProvider,
+  expect: () => ['hello'],
+);
+```
+
+The value is in the list because `fireImmediately` defaults to `true`. With
+`fireImmediately: false` nothing is recorded unless the provider is later invalidated or
+refreshed:
+
+```dart
+riverpodTest(
+  're-builds on refresh',
+  provider: greetingProvider,
+  fireImmediately: false,
+  act: (ref) => ref.invalidate(greetingProvider),
+  expect: () => ['hello'],
+);
+```
+
+<Info>
+  `invalidate` only schedules a rebuild; the provider is rebuilt when it is next read, or on the
+  microtask turn `riverpodTest` awaits before comparing. `ref.refresh(greetingProvider)` rebuilds
+  eagerly and returns the new value.
+</Info>
+
+## FutureProvider
+
+An async provider is observed as a sequence of `AsyncValue`s, so `expect` is written in
+`AsyncValue`s — or with the [matchers](/matchers) this package exports.
+
+```dart
+final userProvider = FutureProvider<User>(
+  (ref) => ref.watch(userRepositoryProvider).fetchUser(),
+);
+
+riverpodTest(
+  'emits [loading, data]',
+  provider: userProvider,
+  setUp: () {
+    repository = MockUserRepository();
+    when(repository.fetchUser).thenAnswer((_) async => const User('Ada'));
+  },
+  overrides: () => [userRepositoryProvider.overrideWithValue(repository)],
+  expect: () => [isLoading, isData(const User('Ada'))],
+);
+```
+
+`isLoading` also matches a *reload* — an `AsyncData` or `AsyncError` that carries a pending
+refresh — because it asserts on `AsyncValue.isLoading`, not on the runtime type. Use
+`isA<AsyncLoading<User>>()` when you specifically mean "no previous value".
+
+## StreamProvider
+
+A `StreamProvider` behaves the same way, one `AsyncData` per event.
+
+```dart
+final ticksProvider = StreamProvider<int>((ref) => Stream.fromIterable([1, 2, 3]));
+
+riverpodTest(
+  'emits every tick',
+  provider: ticksProvider,
+  wait: const Duration(milliseconds: 10),
+  expect: () => [isLoading, isData(1), isData(2), isData(3)],
+);
+```
+
+There is no automatic settling: `riverpodTest` awaits a single microtask turn after `act`. Whenever emissions depend on timers, debounces or real async gaps, give it a `wait`.
+
+## `.select`
+
+A `.select` derivation is a `ProviderListenable` too, so it can be the target directly. That is the
+cheapest way to assert on one slice of a large state and to ignore emissions that do not touch it.
+
+```dart
+final formProvider = NotifierProvider<FormNotifier, FormState>(FormNotifier.new);
+
+riverpodTest(
+  'only re-emits when the email changes',
+  provider: formProvider.select((state) => state.email),
+  act: (ref) {
+    ref.notifier(formProvider)
+      ..setPassword('hunter2') // filtered out by the select
+      ..setEmail('ada@example.com');
+  },
+  expect: () => ['', 'ada@example.com'],
+);
+```
+
+Note that `provider` and the provider you act on are two different objects here: the target is the
+selected slice, while `ref.notifier(...)` needs the provider itself.
+
+<Warning>
+  A `.select` derivation cannot be overridden — a selection is not a provider. Override the provider
+  it derives from instead. See [Seeding](/seeding).
+</Warning>
+
+## `.future`
+
+`somethingProvider.future` is a `Refreshable<Future<T>>`, hence also a listenable. Making it the
+target means the recorded states are `Future`s, which is rarely what you want:
+
+```dart
+riverpodTest(
+  'the future completes with the user',
+  provider: userProvider.future,
+  expect: () => [completion(const User('Ada'))],
+);
+```
+
+Reading it from `act` or `verify` is usually clearer, and it is the idiomatic way to await an async
+provider before asserting:
+
+```dart
+riverpodTest(
+  'awaits the user before verifying',
+  provider: userProvider,
+  act: (ref) async => await ref.read(userProvider.future),
+  verify: (ref) => expect(ref.read(userProvider).requireValue, const User('Ada')),
+);
+```
+
+## Overrides
+
+A plain `Provider` or `FutureProvider` computes its value rather than holding a state, so starting
+it from a given value *is* an override. `overrides` is a callback, so it can close over mocks built
+in `setUp`:
+
+```dart
+riverpodTest(
+  'uses the fake clock',
+  provider: greetingProvider,
+  setUp: () => clock = FakeClock(DateTime(2030)),
+  overrides: () => [
+    clockProvider.overrideWithValue(clock),
+    userRepositoryProvider.overrideWith((ref) => FakeUserRepository()),
+  ],
+  expect: () => ['good morning'],
+);
+```
+
+<Info>
+  Had `overrides` been a `List<Override>`, it would have been evaluated while `test` collects the
+  test cases — before any `setUp` body has run — and an override referencing a mock would blow up
+  with a late-initialization error. The callback shape is what makes `setUp` + `overrides` compose.
+</Info>
+
+## The container
+
+Every test runs in its own `ProviderContainer.test()`, created after `setUp` and disposed
+automatically when the test ends. It is reachable as `ref.container` for anything `TestRef` does
+not wrap:
+
+```dart
+riverpodTest(
+  'reads through the raw container',
+  provider: counterProvider,
+  verify: (ref) => expect(ref.container.read(counterProvider), 0),
+);
+```

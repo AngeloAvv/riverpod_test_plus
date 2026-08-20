@@ -1,0 +1,134 @@
+---
+title: "Mutations"
+description: "Testing Riverpod 3 mutations — idle, pending, success and error — with riverpodTest."
+---
+
+A Riverpod 3 `Mutation<ResultT>` implements `ProviderListenable<MutationState<ResultT>>`. That is
+the whole reason this package needs no dedicated function for mutations: a mutation is a listenable
+like everything else, so it goes straight into `provider`.
+
+```dart
+import 'package:riverpod/experimental/mutation.dart';
+
+final addTodo = Mutation<Todo>();
+```
+
+## Triggering a mutation from a test
+
+`Mutation.run` takes a `MutationTarget`. In a widget that is the `WidgetRef`; in a test it is the
+`TestRef` itself, which implements `MutationTarget` — so `ref` can be passed straight through.
+
+```dart
+riverpodTest(
+  'emits [idle, pending, success] when the todo is added',
+  provider: addTodo,
+  setUp: () {
+    repository = MockTodoRepository();
+    when(() => repository.add(any())).thenAnswer((_) async => const Todo(1, 'Eat a cookie'));
+  },
+  overrides: () => [todoRepositoryProvider.overrideWithValue(repository)],
+  act: (ref) => addTodo.run(ref, (tsx) async {
+    final notifier = tsx.get(todosProvider.notifier);
+    return notifier.add('Eat a cookie');
+  }),
+  expect: () => [isIdle, isPending, isSuccess(const Todo(1, 'Eat a cookie'))],
+);
+```
+
+The first state is `isIdle` because `fireImmediately` defaults to `true` and a mutation that has
+never run is idle. Use `skip: 1` or `fireImmediately: false` to assert only on
+`[isPending, isSuccess(...)]`.
+
+<Info>
+  `MutationIdle`, `MutationPending`, `MutationSuccess` and `MutationError` have private
+  constructors — you cannot write them as literals in `expect`. The matchers `isIdle`, `isPending`,
+  `isSuccess(value)` and `isMutationError<E>()` exist for exactly that reason. See
+  [Matchers](/matchers).
+</Info>
+
+`tsx` is the `MutationTransaction`: reads performed through `tsx.get(...)` keep the provider alive
+for the duration of the mutation, which is what mutations are for.
+
+## Failing mutations
+
+`Mutation.run` sets the state to `MutationError` **and rethrows**. `act` swallows that rethrow — it
+is the API under test signalling a failure it has already recorded, not a failure of the test — so
+the assertion stays where it belongs, in `expect`:
+
+```dart
+riverpodTest(
+  'emits [idle, pending, error] when the repository fails',
+  provider: addTodo,
+  setUp: () {
+    repository = MockTodoRepository();
+    when(() => repository.add(any())).thenThrow(Exception('offline'));
+  },
+  overrides: () => [todoRepositoryProvider.overrideWithValue(repository)],
+  act: (ref) => addTodo.run(ref, (tsx) {
+    return tsx.get(todosProvider.notifier).add('Eat a cookie');
+  }),
+  expect: () => [isIdle, isPending, isMutationError<Exception>()],
+);
+```
+
+No `try`/`catch` in `act`, and nothing to declare on the side. See [Errors](/errors) for what
+happens to the swallowed exception.
+
+## Keyed mutations
+
+`mutation(key)` returns a distinct mutation sharing the same label. Listen to the exact key you
+trigger:
+
+```dart
+riverpodTest(
+  'tracks only the mutation for todo 42',
+  provider: toggleTodo(42),
+  act: (ref) => toggleTodo(42).run(ref, (tsx) async {
+    return tsx.get(todoProvider(42).notifier).toggle();
+  }),
+  expect: () => [isIdle, isPending, isSuccess(const Todo(42, done: true))],
+);
+```
+
+## Resetting
+
+`Mutation.reset` takes the same `MutationTarget`, so it goes back to idle from `act`:
+
+```dart
+riverpodTest(
+  'goes back to idle after a reset',
+  provider: addTodo,
+  act: (ref) async {
+    await addTodo.run(ref, (tsx) async => const Todo(1, 'Eat a cookie'));
+    addTodo.reset(ref);
+  },
+  expect: () => [isIdle, isPending, isSuccess(const Todo(1, 'Eat a cookie')), isIdle],
+);
+```
+
+## Observing the provider instead of the mutation
+
+A mutation usually changes some provider's state as a side effect. To assert on that instead, make
+the provider the target and trigger the mutation from `act`:
+
+```dart
+riverpodTest(
+  'appends the todo to the list',
+  provider: todosProvider,
+  act: (ref) => addTodo.run(ref, (tsx) async {
+    return tsx.get(todosProvider.notifier).add('Eat a cookie');
+  }),
+  // todosProvider is a NotifierProvider<Todos, List<Todo>> here, so the states
+  // are plain lists rather than AsyncValues.
+  expect: () => [
+    const <Todo>[],
+    const [Todo(1, 'Eat a cookie')],
+  ],
+);
+```
+
+<Info>
+  Mutations are an experimental Riverpod API, imported from
+  `package:riverpod/experimental/mutation.dart`. The matchers this package exports track that API
+  and may follow its changes.
+</Info>

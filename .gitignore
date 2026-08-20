@@ -1,0 +1,26 @@
+# Dart tool artifacts
+.dart_tool/
+.packages
+
+# Build output
+build/
+
+# Lockfile — this is a library package, its lockfile is not committed
+pubspec.lock
+
+# FVM Version Cache
+.fvm/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Planning and AI assistant artifacts
+.planning/
+.claude/
+CLAUDE.md

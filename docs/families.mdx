@@ -1,0 +1,114 @@
+---
+title: "Families"
+description: "Testing family providers by passing the applied family to riverpodTest."
+---
+
+A family is a provider *factory*, not a provider — so it is not something you can listen to. Apply
+it, and what you get back is an ordinary provider that `riverpodTest` accepts like any other.
+
+```dart
+final todoProvider = AsyncNotifierProvider.family<TodoNotifier, Todo, int>(
+  TodoNotifier.new,
+);
+
+class TodoNotifier extends AsyncNotifier<Todo> {
+  TodoNotifier(this.id);
+
+  final int id;
+
+  @override
+  Future<Todo> build() => ref.watch(todoRepositoryProvider).fetch(id);
+
+  Future<void> complete() async {
+    state = await AsyncValue.guard(
+      () => ref.read(todoRepositoryProvider).complete(id),
+    );
+  }
+}
+```
+
+```dart
+riverpodTest(
+  'loads todo 42',
+  provider: todoProvider(42),
+  setUp: () {
+    repository = MockTodoRepository();
+    when(() => repository.fetch(42)).thenAnswer((_) async => const Todo(42, done: false));
+  },
+  overrides: () => [todoRepositoryProvider.overrideWithValue(repository)],
+  expect: () => [isLoading, isData(const Todo(42, done: false))],
+);
+```
+
+`todoProvider(42)` is an `AsyncNotifierProvider<TodoNotifier, Todo>`, so everything else works
+unchanged: `ref.notifier(todoProvider(42))`, `refresh`, `invalidate`, and overriding it with
+`todoProvider(42).overrideWithBuild(...)`.
+
+<Warning>
+  Always apply the same argument you passed to `provider`. `todoProvider(42)` and
+  `todoProvider(43)` are two different providers with two different states, and acting on the wrong
+  one produces a test that observes nothing.
+</Warning>
+
+## Acting on an applied family
+
+Assign it to a local variable to keep the argument in one place:
+
+```dart
+riverpodTest(
+  'completes todo 42',
+  provider: todoProvider(42),
+  setUp: () {
+    repository = MockTodoRepository();
+    when(() => repository.fetch(42)).thenAnswer((_) async => const Todo(42, done: false));
+    when(() => repository.complete(42)).thenAnswer((_) async => const Todo(42, done: true));
+  },
+  overrides: () => [todoRepositoryProvider.overrideWithValue(repository)],
+  act: (ref) async {
+    final todo = todoProvider(42);
+    await ref.read(todo.future);
+    await ref.notifier(todo).complete();
+  },
+  expect: () => [
+    isLoading,
+    isData(const Todo(42, done: false)),
+    isData(const Todo(42, done: true)),
+  ],
+);
+```
+
+## Overriding a family
+
+A whole family can be overridden with `overrideWith`, or a single applied provider with
+`overrideWithValue` — both go inside the `overrides` callback:
+
+```dart
+overrides: () => [
+  // every argument
+  todoProvider.overrideWith(FakeTodoNotifier.new),
+  // just this one
+  otherFamilyProvider(7).overrideWithValue(const Todo(7, done: true)),
+],
+```
+
+## Observing several arguments in one test
+
+`riverpodTest` records the states of a single target. To watch a second one, listen to it from
+`act` through `TestRef.listen` and collect into a local list:
+
+```dart
+riverpodTest(
+  'todo 43 is untouched while todo 42 changes',
+  provider: todoProvider(42),
+  act: (ref) async {
+    final other = <AsyncValue<Todo>>[];
+    ref.listen(todoProvider(43), (previous, next) => other.add(next));
+    await ref.notifier(todoProvider(42)).complete();
+    expect(other, isEmpty);
+  },
+  // ...
+);
+```
+
+Subscriptions opened through `ref.listen` live as long as the container, i.e. until the end of the
+test.

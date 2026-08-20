@@ -1,0 +1,160 @@
+---
+title: "API Reference"
+description: "Every riverpodTest parameter, TestRef member and exported symbol, with types and defaults."
+---
+
+```dart
+import 'package:riverpod_test_plus/riverpod_test_plus.dart';
+
+@isTest
+void riverpodTest<StateT>(
+  String description, {
+  required ProviderListenable<StateT> provider,
+  FutureOr<void> Function()? setUp,
+  List<Override> Function()? overrides,
+  List<ProviderObserver>? observers,
+  Retry? retry,
+  FutureOr<void> Function(TestRef ref)? act,
+  Duration? wait,
+  bool fireImmediately = true,
+  int skip = 0,
+  dynamic Function()? expect,
+  dynamic Function(TestRef ref)? verify,
+  FutureOr<void> Function()? tearDown,
+  dynamic tags,
+});
+```
+
+`riverpodTest` declares a test case — call it where you would call `test`, inside `main()`.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `description` | `String` | required, positional | The test description, forwarded to `test`. |
+| `provider` | `ProviderListenable<StateT>` | required | The target to observe. Any provider, applied family, `.future`, `.select(...)` or `Mutation`. |
+| `setUp` | `FutureOr<void> Function()?` | `null` | Runs first, before the container exists. The place to build mocks and stub them. For setup shared by several tests, prefer `setUp` from `package:test`. |
+| `overrides` | `List<Override> Function()?` | `null` | Provider overrides for the container: mocked dependencies, and the starting state of the provider under test. A callback, not a list, so it can reference objects created in `setUp`. See [Seeding](/seeding). |
+| `observers` | `List<ProviderObserver>?` | `null` | Observers installed on the test container. |
+| `retry` | `Retry?` | `null` (Riverpod's default policy) | The container's retry policy, `Duration? Function(int retryCount, Object error)`. Pass `noRetry` when asserting on errors. |
+| `act` | `FutureOr<void> Function(TestRef ref)?` | `null` | Interacts with the provider through a `TestRef`. Awaited. An exception thrown here does not fail the test — see [Errors](/errors). |
+| `wait` | `Duration?` | `null` | Awaited after `act`, for debounces and other timers. There is no automatic settling. |
+| `fireImmediately` | `bool` | `true` | Whether the state the provider builds to is recorded as the first element. |
+| `skip` | `int` | `0` | Drops the first N recorded emissions before comparing with `expect`. Negative values are treated as `0`. |
+| `expect` | `dynamic Function()?` | `null` | What the provider is expected to emit, states and errors alike: a list of values, a list of matchers, or a single matcher for the whole sequence. May be async. See [Errors](/errors). |
+| `verify` | `dynamic Function(TestRef ref)?` | `null` | Runs after `expect`, with the container still alive. May be async. |
+| `tearDown` | `FutureOr<void> Function()?` | `null` | Runs last. The container is disposed automatically afterwards. |
+| `tags` | `dynamic` | `null` | Forwarded to `test`. |
+
+## Order of execution
+
+<Steps>
+  <Step title="setUp()">
+    Mocks are created and stubbed. The container does not exist yet.
+  </Step>
+  <Step title="The container is created">
+    `ProviderContainer.test(overrides: overrides(), observers: observers, retry: retry)`.
+    It is registered for automatic disposal at the end of the test.
+  </Step>
+  <Step title="The subscription opens">
+    `container.listen(provider, ..., fireImmediately: fireImmediately)`. States land in the
+    recorded sequence; so do errors reaching `onError`, which is the channel a provider whose state
+    is not an `AsyncValue` fails through.
+  </Step>
+  <Step title="act(ref)">
+    Awaited. An exception thrown here never fails the test and never enters the sequence: it is
+    attached with `printOnFailure`, so it surfaces only if the test fails for another reason.
+  </Step>
+  <Step title="wait, then one microtask turn">
+    `await Future.delayed(wait)` when `wait` is set, then `await Future.delayed(Duration.zero)`.
+    The subscription is then closed.
+  </Step>
+  <Step title="expect">
+    The recorded sequence — states and errors alike — minus `skip`, is compared with the
+    expectation. On failure a colored diff
+    is printed; when the sequences render identically but are not `==`, a warning about value
+    equality is appended instead.
+  </Step>
+  <Step title="verify(ref), then tearDown()">
+    Both awaited. The container is disposed after the test ends.
+  </Step>
+</Steps>
+
+## TestRef
+
+The handle passed to `act` and `verify`. No single object fits every target — a plain `Provider`
+has no notifier, a family is a factory, a mutation is triggered from elsewhere — so `TestRef` wraps
+the container the test runs in.
+
+<Property name="container" type="ProviderContainer">
+  The container the test runs in. The escape hatch for anything `TestRef` does not expose — and the
+  `MutationTarget` you pass to `Mutation.run` / `Mutation.reset`.
+</Property>
+
+<Property name="read<StateT>(ProviderListenable<StateT> listenable)" type="StateT">
+  Reads the current value of a listenable. `ref.read(userProvider.future)` awaits an async provider.
+</Property>
+
+<Property name="listen<StateT>(...)" type="ProviderSubscription<StateT>">
+  `listen(listenable, listener, {bool fireImmediately = false, void Function(Object, StackTrace)? onError})`.
+  The subscription lives until the container is disposed, i.e. the end of the test.
+</Property>
+
+<Property name="refresh<StateT>(Refreshable<StateT> refreshable)" type="StateT">
+  Rebuilds a provider eagerly and returns its new value.
+</Property>
+
+<Property name="invalidate(ProviderOrFamily provider, {bool asReload = false})" type="void">
+  Schedules a rebuild. Accepts a whole family as well as a single provider.
+</Property>
+
+<Property name="exists(ProviderBase<Object?> provider)" type="bool">
+  Whether the provider has been initialized in this container.
+</Property>
+
+<Property name="notifier<NotifierT>(NotifierProviderOf<NotifierT> provider)" type="NotifierT">
+  Shorthand for `read(provider.notifier)`, accepting every notifier provider — including families
+  and code-generated ones.
+</Property>
+
+## Other exported symbols
+
+| Symbol | Kind | Description |
+| --- | --- | --- |
+| `riverpodTest` | function | The test declaration. |
+| `TestRef` | class | The handle passed to `act` and `verify`. |
+| `Retry` | typedef | `Duration? Function(int retryCount, Object error)`. |
+| `noRetry` | function | A `Retry` policy that never retries. |
+| `NotifierProviderOf<NotifierT>` | typedef | Any notifier provider — the type `TestRef.notifier` accepts. |
+| `isLoading`, `isData`, `isAsyncError` | matchers | `AsyncValue` matchers — see [Matchers](/matchers). |
+| `isIdle`, `isPending`, `isSuccess`, `isMutationError` | matchers | `MutationState` matchers. |
+
+Matchers from `package:test` itself (`isA`, `containsAllInOrder`, `completion`, …) are not
+re-exported — import `package:test/test.dart` alongside this package when you use them.
+
+## Design decisions
+
+**One function.** In Riverpod 3 everything observable implements `ProviderListenable<StateT>`,
+mutations included. A family of functions, one per provider type, would encode a distinction the
+framework itself does not make.
+
+**No `seed` parameter.** Starting a provider from a given state is an override, and Riverpod already
+names the operation: `overrideWithBuild` for a notifier provider, `overrideWith` for a functional
+one. A dedicated parameter would be a second vocabulary for the same thing — and one that covered
+only half the provider types, since only a notifier owns a state to set. Everything goes through
+`overrides`, and what you learn there works unchanged in a `ProviderScope`. See
+[Seeding](/seeding).
+
+**`overrides` is a closure.** A `List<Override>` is evaluated while `test` collects test cases,
+before any `setUp` body has run, so an override referencing a mock created in `setUp` would explode.
+The callback shape is what makes `setUp` and `overrides` compose.
+
+**No automatic settling.** The runner awaits exactly one microtask turn after `act`. Anything with
+real timing is opted into explicitly with `wait`, which keeps the test's timing visible in the
+test.
+
+**The container is internal.** Every test runs in its own `ProviderContainer.test()`, disposed
+automatically. `ref.container` is the escape hatch for the rest.
+
+**Widget tests are out of scope.** They remain Flutter's, with `testWidgets` and a `ProviderScope`
+around the widget under test.

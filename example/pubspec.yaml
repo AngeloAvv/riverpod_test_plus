@@ -1,0 +1,19 @@
+name: riverpod_test_plus_example
+description: Example app showcasing riverpod_test_plus.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^3.4.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  lints: ^6.0.0
+  riverpod_test_plus:
+    path: ../

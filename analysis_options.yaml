@@ -1,0 +1,7 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  exclude:
+    # The example is a Flutter package with its own analysis_options.yaml, and
+    # is analyzed separately with `fvm flutter analyze`.
+    - example/**

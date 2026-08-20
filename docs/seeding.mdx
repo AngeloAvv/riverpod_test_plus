@@ -1,0 +1,134 @@
+---
+title: "Seeding"
+description: "Starting a test from a given state, using Riverpod's own override methods."
+---
+
+There is no `seed` parameter. Starting a provider from a given state is an **override**, and
+Riverpod already has the methods for it — the same ones you would use in a `ProviderScope` inside
+the app:
+
+```dart
+riverpodTest(
+  'emits [9, 10] when incrementing from 9',
+  provider: counterProvider,
+  overrides: () => [counterProvider.overrideWithBuild((ref, self) => 9)],
+  act: (ref) => ref.notifier(counterProvider).increment(),
+  expect: () => [9, 10],
+);
+```
+
+`overrideWithBuild` replaces the body of `build` and **keeps the notifier**: `increment` is the real
+one, and so is every other method. It is Riverpod's own answer to "initialize my notifier with a
+specific state, but keep its implementation" — see [Provider
+overrides](https://riverpod.dev/docs/concepts2/overrides).
+
+## The recipe per target
+
+Two methods cover everything, and the split is Riverpod's, not this package's: a notifier provider
+has a `build` to override, a functional provider has a creation function.
+
+| Target | Override to write |
+| --- | --- |
+| `Provider<V>` | `p.overrideWith((ref) => value)` |
+| `FutureProvider<V>` | `p.overrideWith((ref) => value)` — returned synchronously, so no loading state |
+| `StreamProvider<V>` | `p.overrideWith((ref) => controller.stream)`, controller left open |
+| `NotifierProvider<N, S>` | `p.overrideWithBuild((ref, self) => value)` |
+| `AsyncNotifierProvider<N, V>` | `p.overrideWithBuild((ref, self) => value)` — no loading state |
+| `StreamNotifierProvider<N, V>` | `p.overrideWithBuild((ref, self) => controller.stream)` |
+| A family | the same, on the **applied** family: `p(42).overrideWithBuild(...)` |
+| A `Mutation` | not seedable: its state belongs to its own lifecycle, driven by `run` and `reset` |
+
+## Starting from data, loading or an error
+
+For an async provider the shape of what you return decides the starting state:
+
+```dart
+// Already loaded — returning the value synchronously means the first state is
+// AsyncData, with no loading in between.
+overrides: () => [userProvider.overrideWithBuild((ref, self) => user)],
+expect: () => [isData(user)],
+
+// Held in loading, for as long as the test lasts.
+overrides: () => [
+  userProvider.overrideWithBuild((ref, self) => Completer<User>().future),
+],
+expect: () => [isLoading],
+
+// Starting in error. Riverpod retries failing providers by default, so turn it
+// off when asserting on the failure.
+overrides: () => [
+  userProvider.overrideWithBuild(
+    (ref, self) => Future<User>.error(const Offline(), StackTrace.empty),
+  ),
+],
+retry: noRetry,
+expect: () => [isLoading, isAsyncError<Offline>()],
+```
+
+A stream notifier takes a `Stream`, and the controller must be **left open** — a closed stream puts
+the provider in its done state right away:
+
+```dart
+overrides: () => [
+  ticksProvider.overrideWithBuild((ref, self) {
+    final controller = StreamController<int>();
+    controller.add(7);
+    ref.onDispose(controller.close);
+    return controller.stream;
+  }),
+],
+expect: () => [isLoading, isData(7)],
+```
+
+## Families
+
+A family is a provider factory, so the override goes on the applied family. Siblings are untouched:
+
+```dart
+riverpodTest(
+  'starts todo 7 from a given title',
+  provider: todoProvider(7),
+  overrides: () => [
+    todoProvider(7).overrideWithBuild((ref, self) => const Todo(7, 'Seeded')),
+  ],
+  expect: () => [isData(const Todo(7, 'Seeded'))],
+);
+```
+
+## What an override does, and does not, run
+
+<Warning>
+  `overrideWithBuild` replaces the body of `build`. The notifier is still the real one — its methods
+  work as usual — but anything the original `build` did no longer happens: `ref.watch` on a
+  dependency, `ref.onDispose`, subscriptions opened there. When that setup is part of what you are
+  testing, mock the dependency with an override instead of overriding the build.
+</Warning>
+
+Two consequences worth knowing:
+
+- **The value survives a rebuild.** Invalidate the provider and `build` runs again — which now means
+  the override runs again, so the state goes back to the value you set, not to what the original
+  `build` would have computed.
+- **The dependencies of the original `build` no longer apply.** A notifier that built from
+  `ref.watch(otherProvider)` stops reacting to `otherProvider` once its build is overridden.
+
+## Overriding a dependency instead
+
+When you want the real `build` to run, but with different data behind it, override the dependency —
+usually a repository — and let the provider compute its own state:
+
+```dart
+riverpodTest(
+  'loads the user through the repository',
+  provider: userProvider,
+  overrides: () => [
+    userRepositoryProvider.overrideWithValue(FakeUserRepository(user)),
+  ],
+  wait: const Duration(milliseconds: 10),
+  expect: () => [isLoading, isData(user)],
+);
+```
+
+This is the version to reach for when the transition matters — the loading state, the number of
+calls, the error path of the real code — while an override of `build` is the version to reach for
+when only the starting state matters.

@@ -1,0 +1,102 @@
+---
+title: "Matchers"
+description: "isLoading, isData, isAsyncError, isIdle, isPending, isSuccess and isMutationError."
+---
+
+`expect` accepts anything `package:test` accepts: a list of concrete states, a list mixing states
+and matchers, or a single matcher for the whole sequence. For `AsyncValue` and `MutationState` —
+where writing literals is verbose or outright impossible — this package exports a small set of
+matchers.
+
+```dart
+import 'package:riverpod_test_plus/riverpod_test_plus.dart';
+```
+
+## AsyncValue matchers
+
+<Property name="isLoading" type="Matcher">
+  Matches an `AsyncValue` that is currently loading. It asserts on `AsyncValue.isLoading`, so it
+  also matches a *reload* — an `AsyncData` or `AsyncError` carrying a pending refresh. When you
+  specifically mean "loading with no previous value", use `isA<AsyncLoading<T>>()`.
+</Property>
+
+<Property name="isData(Object? value)" type="Matcher">
+  Matches an `AsyncData` holding `value`. `value` may itself be a matcher:
+  `isData(isA<User>().having((u) => u.name, 'name', 'Ada'))`.
+</Property>
+
+<Property name="isAsyncError<ErrorT>([Object? error])" type="Matcher">
+  Matches an `AsyncError` whose error is a `ErrorT`. Pass `error` to also assert on the error
+  itself — a value compared with `==`, or another matcher.
+</Property>
+
+```dart
+expect: () => [
+  isLoading,
+  isAsyncError<HttpException>(),
+  isData(isA<User>().having((user) => user.name, 'name', startsWith('A'))),
+],
+```
+
+## Mutation matchers
+
+`MutationIdle`, `MutationPending`, `MutationSuccess` and `MutationError` all have private
+constructors — they cannot be written as literals in `expect`. These matchers are the way to assert
+on them.
+
+<Property name="isIdle" type="Matcher">
+  Matches a mutation that has not started, or that was reset with `Mutation.reset`.
+</Property>
+
+<Property name="isPending" type="Matcher">
+  Matches a mutation that is currently running.
+</Property>
+
+<Property name="isSuccess(Object? value)" type="Matcher">
+  Matches a mutation that completed with `value`. `value` may itself be a matcher.
+</Property>
+
+<Property name="isMutationError<ErrorT>([Object? error])" type="Matcher">
+  Matches a mutation that failed with an error of type `ErrorT`. Pass `error` to also assert on the
+  error itself.
+</Property>
+
+```dart
+expect: () => [isIdle, isPending, isMutationError<TimeoutException>()],
+```
+
+## Matching the whole sequence
+
+Because `expect` returns `dynamic` and is wrapped with `wrapMatcher`, a single matcher can describe
+the entire list:
+
+```dart
+// exact length, ordered
+expect: () => [isLoading, isData(const User('Ada'))],
+
+// any order, all present
+expect: () => containsAll([isData(const User('Ada')), isLoading]),
+
+// only care that these appear, in this order
+expect: () => containsAllInOrder([isLoading, isData(const User('Ada'))]),
+
+// nothing at all was emitted
+expect: () => isEmpty,
+```
+
+These composite matchers come from `package:test`; import it alongside this package when you use
+them.
+
+## Concrete states and equality
+
+Concrete states are compared with `==`, so a state class without value equality will fail even when
+the values look identical. `riverpodTest` detects that case — expected and actual have the same
+string representation but are not equal — and appends a warning suggesting `Equatable`, an
+`operator ==` override, or matchers instead of instances. When the two sequences really differ, a
+colored diff is printed instead.
+
+<Info>
+  `AsyncData`, `AsyncLoading` and `AsyncError` do implement value equality, so
+  `expect: () => [const AsyncLoading<User>(), const AsyncData(User('Ada'))]` works — provided `User`
+  itself has value equality. The matchers stay the more readable option, especially for reloads.
+</Info>

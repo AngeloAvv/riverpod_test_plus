@@ -1,0 +1,41 @@
+name: Run Tests
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        required: true
+        type: string
+      flutter:
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup dart env
+        if: ${{ !inputs.flutter }}
+        uses: ./.github/actions/dart
+        with:
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Setup flutter env
+        if: ${{ inputs.flutter }}
+        uses: ./.github/actions/flutter
+        with:
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Test (dart)
+        if: ${{ !inputs.flutter }}
+        run: dart test
+        working-directory: ${{ inputs.working-directory }}
+
+      - name: Test (flutter)
+        if: ${{ inputs.flutter }}
+        run: fvm flutter test
+        working-directory: ${{ inputs.working-directory }}

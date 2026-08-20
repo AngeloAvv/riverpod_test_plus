@@ -1,0 +1,32 @@
+{
+  "name": "riverpod_test_plus",
+  "description": "Test any Riverpod 3 provider with a single function",
+  "repository": "https://github.com/AngeloAvv/riverpod_test_plus",
+  "sidebar": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "index",
+        "getting-started"
+      ]
+    },
+    {
+      "group": "Guides",
+      "pages": [
+        "providers",
+        "notifiers",
+        "families",
+        "mutations",
+        "seeding",
+        "matchers",
+        "errors"
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "api-reference"
+      ]
+    }
+  ]
+}

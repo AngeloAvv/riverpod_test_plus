@@ -1,0 +1,60 @@
+---
+title: "riverpod_test_plus"
+description: "Test any Riverpod 3 provider with a single function."
+---
+
+`riverpodTest` declares a test case that observes a provider, acts on it, and asserts on the
+sequence it emits.
+
+There is exactly **one** function, whatever you are testing. In Riverpod 3 everything observable
+implements `ProviderListenable<StateT>` — a `Provider`, a `FutureProvider`, a `NotifierProvider`, an
+applied family, a `.select` derivation, even a `Mutation`. So `riverpodTest` takes a
+`ProviderListenable` and works for all of them.
+
+```dart
+riverpodTest(
+  'increments the counter',
+  provider: counterProvider,
+  act: (ref) => ref.notifier(counterProvider).increment(),
+  expect: () => [0, 1],
+);
+```
+
+## Features
+
+- **One signature for every target** — `Provider`, `FutureProvider`, `StreamProvider`,
+  `NotifierProvider`, `AsyncNotifierProvider`, `StreamNotifierProvider`, families, `.future`,
+  `.select(...)` and `Mutation`s
+- **`TestRef`** — the handle Riverpod does not have: `read`, `listen`, `refresh`, `invalidate`,
+  `exists`, `notifier(provider)` and the raw `container` as an escape hatch
+- **State sequence assertions** — `expect` receives the real, ordered list of emitted states,
+  `AsyncValue`s included, with a colored diff on failure
+- **Matchers for async and mutation states** — `isLoading`, `isData`, `isAsyncError`, `isIdle`,
+  `isPending`, `isSuccess`, `isMutationError`
+- **Errors in the sequence** — a failure is asserted in `expect` like any other emission, as an
+  `AsyncError` state or as the error object itself
+- **Lazy `overrides`** — a callback, so overrides can reference mocks created in `setUp`, and the
+  place where a test sets the state a provider starts from
+- **Retry control** — `retry: noRetry` silences Riverpod's automatic retry of failing providers
+- **Automatic container disposal** — the container is a `ProviderContainer.test()`, torn down for you
+
+## Installation
+
+```yaml title="pubspec.yaml"
+dev_dependencies:
+  riverpod_test_plus: ^0.1.0
+```
+
+`riverpod_test_plus` is a dev dependency — it never ends up in your app's runtime tree. It depends
+on `package:riverpod` and `package:test` only, so it works in pure Dart packages as well as in
+Flutter ones.
+
+## Scope
+
+This package tests providers, not widgets. Widget tests stay what they are in Flutter:
+`testWidgets` with a `ProviderScope` around the widget under test.
+
+## Get Started
+
+Follow the [Getting Started guide](/getting-started) to write your first test, or jump to the
+[API Reference](/api-reference) for every parameter.

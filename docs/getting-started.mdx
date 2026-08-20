@@ -1,0 +1,162 @@
+---
+title: "Getting Started"
+description: "Write your first riverpodTest, from installation to a passing async test."
+---
+
+This guide goes from an empty `test/` folder to tests covering a synchronous notifier and an
+asynchronous one with a mocked dependency.
+
+<Steps>
+  <Step title="Add the dev dependency">
+    ```yaml title="pubspec.yaml"
+    dev_dependencies:
+      riverpod_test_plus: ^0.1.0
+      test: ^1.25.0
+    ```
+
+    Then run `dart pub get` (or `flutter pub get`).
+
+    <Info>
+      In a Flutter package, keep `flutter_test` as well for widget tests — `riverpod_test_plus`
+      only covers provider-level tests.
+    </Info>
+  </Step>
+
+  <Step title="Write the provider under test">
+    Nothing special is required of the provider: no test-only constructor, no exposed container.
+
+    ```dart title="lib/counter.dart"
+    import 'package:riverpod/riverpod.dart';
+
+    final counterProvider = NotifierProvider<Counter, int>(Counter.new);
+
+    class Counter extends Notifier<int> {
+      @override
+      int build() => 0;
+
+      void increment() => state++;
+    }
+    ```
+  </Step>
+
+  <Step title="Write the test">
+    `riverpodTest` declares a test case — call it inside a `main()`, at the same place you would
+    call `test`.
+
+    ```dart title="test/counter_test.dart"
+    import 'package:riverpod_test_plus/riverpod_test_plus.dart';
+
+    import 'package:my_app/counter.dart';
+
+    void main() {
+      riverpodTest(
+        'starts at 0',
+        provider: counterProvider,
+        expect: () => [0],
+      );
+
+      riverpodTest(
+        'emits [0, 1, 2] when increment is called twice',
+        provider: counterProvider,
+        act: (ref) {
+          ref.notifier(counterProvider)
+            ..increment()
+            ..increment();
+        },
+        expect: () => [0, 1, 2],
+      );
+    }
+    ```
+
+    The first element is `0` because `fireImmediately` defaults to `true`: the state the provider
+    builds to is recorded like any other. Pass `fireImmediately: false` (or `skip: 1`) to assert
+    only on what happens after `act`.
+  </Step>
+
+  <Step title="Run it">
+    ```sh
+    dart test
+    ```
+
+    On failure, the expected and actual sequences are printed with a colored diff.
+  </Step>
+
+  <Step title="Test an async provider with a mocked dependency">
+    Async providers emit `AsyncValue`s, so `expect` is a list of `AsyncValue`s — or of the
+    [matchers](/matchers) this package exports.
+
+    ```dart title="lib/user.dart"
+    final userRepositoryProvider = Provider<UserRepository>(
+      (ref) => throw UnimplementedError(),
+    );
+
+    final userProvider = AsyncNotifierProvider<UserNotifier, User>(UserNotifier.new);
+
+    class UserNotifier extends AsyncNotifier<User> {
+      @override
+      Future<User> build() => ref.watch(userRepositoryProvider).fetchUser();
+
+      Future<void> rename(String name) async {
+        state = const AsyncLoading<User>();
+        state = await AsyncValue.guard(
+          () => ref.read(userRepositoryProvider).rename(name),
+        );
+      }
+    }
+    ```
+
+    ```dart title="test/user_test.dart"
+    void main() {
+      late MockUserRepository repository;
+
+      riverpodTest(
+        'emits [loading, data] while loading the user',
+        provider: userProvider,
+        setUp: () {
+          repository = MockUserRepository();
+          when(repository.fetchUser).thenAnswer((_) async => const User('Ada'));
+        },
+        // A callback, not a list: it runs after setUp, so `repository` exists.
+        overrides: () => [userRepositoryProvider.overrideWithValue(repository)],
+        expect: () => [isLoading, isData(const User('Ada'))],
+      );
+    }
+    ```
+
+    <Info>
+      `overrides` is a callback rather than a plain list on purpose — see
+      [Design decisions](/api-reference#design-decisions).
+    </Info>
+  </Step>
+
+  <Step title="Assert on interactions and errors">
+    A failure is part of what the provider emits, so it is asserted in `expect` like any other
+    element. `verify` runs afterwards with the container still alive.
+
+    ```dart
+    riverpodTest(
+      'surfaces the repository failure',
+      provider: userProvider,
+      setUp: () {
+        repository = MockUserRepository();
+        when(repository.fetchUser).thenThrow(Exception('boom'));
+      },
+      overrides: () => [userRepositoryProvider.overrideWithValue(repository)],
+      // Riverpod retries failing providers by default; that would emit extra states.
+      retry: noRetry,
+      expect: () => [isLoading, isAsyncError<Exception>()],
+      verify: (ref) => verify(repository.fetchUser).called(1),
+    );
+    ```
+
+    See [Errors and retries](/errors) for the full story.
+  </Step>
+</Steps>
+
+## Where to next
+
+- [Providers](/providers) — plain, future and stream providers, `.select`, `.future`, overrides
+- [Notifiers](/notifiers) — acting on notifiers through `TestRef`
+- [Families](/families) and [Mutations](/mutations)
+- [Seeding](/seeding) — starting a provider from a state of your choosing
+- [API Reference](/api-reference) — every parameter, its type and default

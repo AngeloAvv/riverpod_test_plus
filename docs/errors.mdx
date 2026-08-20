@@ -1,0 +1,139 @@
+---
+title: "Errors and retries"
+description: "Errors are part of the emitted sequence and asserted in expect, plus disabling Riverpod's automatic retry with noRetry."
+---
+
+There is no `errors` parameter. A failure is something the provider emits, so it belongs to the
+sequence `expect` asserts on — next to the states, in the order it happened.
+
+## Two shapes, one channel
+
+How a failure shows up depends on whether the provider's state can hold it:
+
+| Provider | What `expect` sees |
+| --- | --- |
+| `FutureProvider`, `StreamProvider`, `AsyncNotifierProvider`, `StreamNotifierProvider` | an `AsyncError` **state** — match it with `isAsyncError<E>()` |
+| `Mutation` | a `MutationError` **state** — match it with `isMutationError<E>()` |
+| `Provider`, `NotifierProvider` | no state can represent a failure, so **the error object itself** takes its place in the sequence |
+
+The two are mutually exclusive: a provider whose state is an `AsyncValue` reports its failure as a
+state and never as an error object, so nothing is ever counted twice.
+
+```dart
+riverpodTest(
+  'emits [loading, error] when the repository fails',
+  provider: userProvider,
+  setUp: () {
+    repository = MockUserRepository();
+    when(repository.fetchUser).thenThrow(Exception('offline'));
+  },
+  overrides: () => [userRepositoryProvider.overrideWithValue(repository)],
+  retry: noRetry,
+  expect: () => [isLoading, isAsyncError<Exception>()],
+);
+```
+
+## Matching an error object
+
+For a synchronous provider the error object sits in the list like any other element, so both forms
+of matching work — a matcher, or plain equality:
+
+```dart
+riverpodTest(
+  'emits the error raised while building',
+  provider: configProvider,
+  expect: () => [isA<ConfigMissing>()],
+);
+
+riverpodTest(
+  'emits the error raised while building',
+  provider: configProvider,
+  expect: () => [const ConfigMissing()],
+);
+```
+
+States and errors interleave, which is what makes a recovery readable in one expectation:
+
+```dart
+riverpodTest(
+  'recovers once the dependency is valid again',
+  provider: parsedPortProvider,
+  act: (ref) async {
+    ref.notifier(rawPortProvider).update('not a number');
+    await Future<void>.delayed(Duration.zero);
+    ref.notifier(rawPortProvider).update('8080');
+  },
+  expect: () => [80, isA<FormatException>(), 8080],
+);
+```
+
+<Info>
+  Matching by equality requires the error class to implement `==` — or to be `const`, which
+  canonicalises instances. This is the same rule that applies to states, and the same failure
+  message warns about it.
+</Info>
+
+Because the error is an element of the sequence, a provider that fails where you did not expect it
+to can no longer slip through: the list simply does not match.
+
+## Errors thrown by `act`
+
+An exception thrown by `act` does **not** fail the test, and does not appear in the sequence — it is
+not something the provider emitted.
+
+This matters for any API that records a failure and then rethrows. `Mutation.run` is the canonical
+case: it sets `MutationError` and rethrows, so a rethrow that failed the test would destroy the very
+assertion you are writing.
+
+```dart
+riverpodTest(
+  'emits [idle, pending, error] when the repository fails',
+  provider: addTodo,
+  overrides: () => [todoRepositoryProvider.overrideWithValue(failingRepository)],
+  act: (ref) => addTodo.run(ref, (tsx) => tsx.get(todosProvider.notifier).add('Eat a cookie')),
+  expect: () => [isIdle, isPending, isMutationError<Exception>()],
+);
+```
+
+The swallowed exception is not lost: it is attached to the test through `printOnFailure`, so a green
+test stays silent while a failing one shows what `act` threw, stack trace included — which is what
+you need when the throw was a bug in the test itself.
+
+## Riverpod retries by default
+
+Riverpod 3 retries a failing provider automatically: exponential backoff starting at 200 ms, up to
+10 attempts. It skips errors that are `Error` subclasses (and `ProviderException`), but a plain
+`Exception` — the common case in repositories — *is* retried.
+
+In a test that means extra rebuilds and the same failure repeated in the sequence, racing against
+whatever `wait` you set. When asserting on a failure, turn it off:
+
+```dart
+riverpodTest(
+  'emits [loading, error] once',
+  provider: userProvider,
+  retry: noRetry,
+  expect: () => [isLoading, isAsyncError<Exception>()],
+);
+```
+
+`noRetry` is exported by this package and is just `(retryCount, error) => null` — the policy that
+never retries. `retry` is forwarded to `ProviderContainer.test`, so it accepts any
+`Duration? Function(int retryCount, Object error)`:
+
+```dart
+// Retry twice, immediately, to assert on the retry behaviour itself.
+retry: (retryCount, error) => retryCount < 2 ? Duration.zero : null,
+```
+
+<Info>
+  A provider that declares its own `retry:` overrides the container's policy — `retry: noRetry` on
+  the test will not silence it. Pass `retry:` on the provider itself, or override the provider in
+  the test.
+</Info>
+
+## Uncaught asynchronous errors
+
+The test body runs inside a guarded zone, so an error escaping an unawaited future does not vanish
+into the test runner — it fails the test. To assert on an error raised by a fire-and-forget future,
+make `act` await it.
