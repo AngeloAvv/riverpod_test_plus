@@ -53,7 +53,10 @@ final class TestRef implements MutationTarget {
     container.invalidate(provider, asReload: asReload);
   }
 
+  // Riverpod deprecates ProviderContainer.exists without a direct replacement
+  // in 3.5.x, so the wrapper keeps delegating until one is available.
   /// Whether [provider] has been initialized in this container.
+  // ignore: deprecated_member_use
   bool exists(ProviderBase<Object?> provider) => container.exists(provider);
 
   /// Reads the notifier of [provider].
