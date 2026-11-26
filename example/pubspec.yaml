@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_riverpod: ^3.5.0
+  material_ui: ^1.11.1
 
 dev_dependencies:
   flutter_test:
